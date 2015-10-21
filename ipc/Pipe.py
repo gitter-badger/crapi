@@ -1,0 +1,354 @@
+# Copyright (C) 2014/15 - Iraklis Diakos (hdiakos@outlook.com)
+# Pilavidis Kriton (kriton_pilavidis@outlook.com)
+# All Rights Reserved.
+# You may use, distribute and modify this code under the
+# terms of the MIT license.
+#
+
+"""Part of the ipc module."""
+
+from __future__ import absolute_import
+from __future__ import print_function
+from __future__ import unicode_literals
+# Python native libraries.
+from abc import ABCMeta
+from abc import abstractmethod
+from enum import Enum
+import random
+# Python 3rd party libraries.
+import win32api as w32api
+import win32pipe as w32p
+import win32file as w32f
+import win32event as w32ev
+import pywintypes as WinT
+import winerror as werr
+
+from crapi.ipc.PipeError import PipeError
+from crapi.ipc.PipeTimeoutError import PipeTimeoutError
+
+
+class Pipe(object):
+
+    __metaclass__ = ABCMeta
+
+    class Type(Enum):
+        ANONYMOUS = 'anonymous'
+        NAMED = 'named'
+        TRANSACTIONAL = 'transactional'
+
+    class Mode(Enum):
+
+        DUPLEX = 'duplex'
+        READ_ONLY = 'read_only'
+        WRITE_ONLY = 'write_only'
+
+    class Channel(Enum):
+
+        BYTE = 'byte'
+        MESSAGE = 'message'
+
+    class Transport(Enum):
+
+        SYNCHRONOUS = 'synchronous'
+        ASYNCHRONOUS = 'asynchronous'
+        TRANSACTIONAL = 'transactional'
+
+    class View(Enum):
+
+        SERVER = 'server'
+        CLIENT = 'client'
+
+    def __init__(self, name='', ptype=Type.NAMED, mode=Mode.DUPLEX,
+                 channel=Channel.MESSAGE, async=False, view=View.SERVER,
+                 instances=1, buf_sz=[10, 10]):
+
+        if name == '':
+            self.name = 'pipe' + str(random.randint(9999, 9999999))
+        else:
+            self.name = name
+
+        self.ptype = ptype
+        if self.ptype == Pipe.Type.NAMED:
+            pass
+        else:
+            raise NotImplementedError('Sorry! Other pipe types are a WIP!')
+
+        self.mode = mode
+        if self.mode == Pipe.Mode.DUPLEX:
+            self.__mode = w32p.PIPE_ACCESS_DUPLEX
+        else:
+            raise NotImplementedError('Sorry! Other pipe modes are a WIP!')
+
+        self.channel = channel
+        if self.channel == Pipe.Channel.MESSAGE:
+            self.__channel = w32p.PIPE_TYPE_MESSAGE
+            # This will enable the ERROR_MORE_DATA exception although we
+            # could handle the case of having more data in the buffer
+            # without it.
+            self.__channel |= w32p.PIPE_READMODE_MESSAGE
+        else:
+            raise NotImplementedError('Sorry! Other channel modes are a WIP!')
+
+        self.async = async
+        self.view = view
+        # Using PIPE_NOWAIT in overlapped mode is deprecated and will cause
+        # an ERROR_PIPE_LISTENING exception when using ConnectNamedPipe.
+        # To avoid inefficient polling, which is CPU-stressing we make use of
+        # events (aka signals!).
+        # NOTE: If FILE_FLAG_OVERLAPPED is specified with PIPE_WAIT then
+        #       ConnectNamedPipe will not raise an ERROR_PIPE_LISTENING
+        #       exception however any read/write operation in the pipe stream
+        #       will cause that.
+        if self.view == Pipe.View.SERVER:
+            if self.async:
+                self.__open_mode = self.__mode | w32f.FILE_FLAG_OVERLAPPED
+            else:
+                self.__open_mode = self.__mode
+            self.__open_mode2 = 0
+            self.__pipe_mode = self.__channel | w32p.PIPE_WAIT
+        else:
+            self.__open_mode = w32f.OPEN_EXISTING
+            self.__open_mode2 = w32f.FILE_FLAG_OVERLAPPED
+            if self.__mode == w32p.PIPE_ACCESS_DUPLEX:
+                self.__pipe_mode = w32f.GENERIC_READ | w32f.GENERIC_WRITE
+
+        if instances < 0:
+            raise ValueError(
+                'Invalid # of instances: Only positive numbers are allowed!'
+            )
+        elif instances == 0:
+            self.__instances = w32p.PIPE_UNLIMITED_INSTANCES
+        else:
+            self.__instances = instances
+        self.instances = instances
+        for sz in buf_sz:
+            if sz <= 0:
+                raise ValueError(
+                    'Buffer size cannot be zero or negative!'
+                )
+
+        if self.ptype == Pipe.Type.NAMED:
+            if self.view == Pipe.View.SERVER:
+                self.__hPipe = w32p.CreateNamedPipe(
+                    '\\\\.\\pipe\\' + self.name,
+                    self.__open_mode,
+                    self.__pipe_mode,
+                    self.__instances,
+                    buf_sz[1],
+                    buf_sz[0],
+                    0,  # 50ms per MSDN documentation
+                    None
+                )
+            else:
+                self.__hPipe = w32f.CreateFile(
+                    '\\\\.\\pipe\\' + self.name,
+                    self.__pipe_mode,
+                    0,
+                    None,
+                    self.__open_mode,
+                    self.__open_mode2,
+                    None
+                )
+
+    def __getOverlappedStruct(self):
+        # We should use a new overlapped object for each asynchronous
+        # operation since the MSDN site states:
+        # "A common mistake is to reuse an OVERLAPPED structure before the
+        #  previous asynchronous operation has been completed. You should
+        #  use a separate structure for each request. You should also create
+        #  an event object for each thread that processes data. If you store
+        #  the event handles in an array, you could easily wait for all events
+        #  to be signaled using the WaitForMultipleObjects function."
+        #
+        # Source URL:
+        #   https://msdn.microsoft.com/en-us/library/windows/desktop/ms684342(v=vs.85).aspx
+        # Additional URLs:
+        #   https://msdn.microsoft.com/en-us/library/windows/desktop/aa365683(v=vs.85).aspx
+        # Also, it is suggested to initialize all offset fields to 0.
+        stream = WinT.OVERLAPPED()
+        stream.Offset = 0
+        stream.OffsetHigh = 0
+        stream.hEvent = w32ev.CreateEvent(None, True, False, None)
+
+        return stream
+
+    def __waitForEvent(self, stream, event_timeout):
+        # Asynchronous I/O operations may complete in the
+        # blink of an eye giving the false impression that
+        # it completed as a synchronous I/O. As such, we
+        # have to wait for the event to be signaled by the
+        # read operation.
+        # This is also required if GetOverlappedResult does
+        # not wait for data to become available (bWait is
+        # set to False) otherwise it will complain that the
+        # event handler is in a non-signaled state.
+        event_code = w32ev.WaitForSingleObject(
+            stream.hEvent, event_timeout
+        )
+        if event_code == w32ev.WAIT_TIMEOUT:
+            raise PipeTimeoutError(
+                    'Connection timeout while awaiting pipe activity!',
+                    'event_timeout',
+                    event_timeout,
+                    'event_code',
+                    event_code
+            )
+        elif event_code != w32ev.WAIT_OBJECT_0:
+            raise PipeError(
+                'Unexpected pipe signal code event!',
+                'event_code',
+                event_code
+            )
+
+    def __expandBufferPipe(self, buf_sz):
+        buf_sz = buf_sz*2
+        return w32f.AllocateReadBuffer(buf_sz)
+
+    def connect(self, timeout=0, buf_sz=0):
+        if self.async:
+            if timeout == 0:
+                event_timeout = w32ev.INFINITE
+            stream = self.__getOverlappedStruct()
+            # Asynchronous named pipes return immediately!
+            status_code = w32p.ConnectNamedPipe(
+                self.__hPipe, stream
+            )
+            if status_code != werr.ERROR_IO_PENDING:
+                raise PipeError(
+                    'Failed to create unsynchronous named pipe connection!',
+                    'status_code',
+                    status_code
+                )
+            self.__waitForEvent(stream, event_timeout)
+        else:
+            status_code = w32p.ConnectNamedPipe(self.__hPipe, None)
+            if status_code != 0:
+                raise PipeError(
+                    'Failed to create synchronous named pipe connection!',
+                    'status_code',
+                    status_code
+                )
+
+        return 0
+
+    # Some notes about the read operation when in server view mode:
+    # Status Code, GetLastError():
+    # 0, 0 from start to finish. May cause ERROR_BROKEN_PIPE.
+    # 997, 997 in start and finish of I/O operation.
+    # 234, 234 after the first I/O; buffer is too small and while growing
+    # it we reach a 0, 234 with a possibility of ERROR_BROKEN_PIPE
+    # (recoverable).
+    # Unlike the MS ReadWrite/WriteFile variants, these one return 0,
+    # ERROR_IO_PENDING or ERROR_MORE_DATA making use of the GetLastError()
+    # quite unnecessary.
+    def read(self, timeout=0, buf_sz=0):
+        if self.async:
+            if timeout == 0:
+                event_timeout = 50  # 50ms is the default value per MSDN docs.
+            stream = self.__getOverlappedStruct()
+            if buf_sz <= 0:
+                buf_sz = 1024
+            ov_buf = w32f.AllocateReadBuffer(buf_sz)
+            if self.view == Pipe.View.SERVER:
+                pipe_data = None
+                while True:
+                    try:
+                        pipe_status, pipe_buffer = w32f.ReadFile(
+                            self.__hPipe, ov_buf, stream
+                        )
+                    except WinT.error, e:
+                        if e.args[0] == werr.ERROR_BROKEN_PIPE:
+                            return 1, stream.Offset, pipe_data
+                        elif e.args[0] == werr.ERROR_MORE_DATA:
+                            pass
+                        else:
+                            raise
+                    if pipe_status == 0 or \
+                       pipe_status == werr.ERROR_IO_PENDING:
+                        if pipe_status == werr.ERROR_IO_PENDING:
+                            self.__waitForEvent(stream, event_timeout)
+                        try:
+                            read_bytes = w32f.GetOverlappedResult(
+                                self.__hPipe, stream, False
+                            )
+                        except WinT.error, e:
+                            if e.args[0] == werr.ERROR_MORE_DATA:
+                                ov_buf = self.__expandBufferPipe(buf_sz)
+                                stream.Offset += len(pipe_buffer)
+                                pipe_data += pipe_buffer
+                                continue
+                            elif e.args[0] == werr.ERROR_BROKEN_PIPE:
+                                return 1, stream.Offset, pipe_data
+                            else:
+                                raise
+                    elif pipe_status == werr.ERROR_MORE_DATA:
+                        ov_buf = self.__expandBufferPipe(buf_sz)
+                        stream.Offset += len(pipe_buffer)
+                        pipe_data += pipe_buffer
+                        continue
+                    else:
+                        raise PipeError(
+                            'Pipe encountered a fatal error!',
+                            'error_code',
+                            w32api.GetLastError()
+                        )
+                    # We should update the offset data since we are
+                    # responsible for handling this by using the
+                    # underlying overlapping I/O API structure although
+                    # this does not seem to affect operations (despite
+                    # the documentation in ActiveState mentioning
+                    # otherwise)
+                    stream.Offset += read_bytes
+                    pipe_data += pipe_buffer[:read_bytes]
+                    if read_bytes < len(pipe_buffer):
+                        return 0, stream.Offset, pipe_data
+
+        else:
+            pipe_status, pipe_content = w32f.ReadFile(
+                self.__hPipe, buf_sz, None
+            )
+            return 0, len(pipe_content), pipe_content
+
+    def write(self, payload, timeout=0, buf_sz=0):
+        if self.async:
+            if timeout == 0:
+                event_timeout = 50
+            if self.view == Pipe.View.CLIENT:
+                stream = self.__getOverlappedStruct()
+                if buf_sz > 0:
+                    str_buf = buffer(payload, 0, payload[:buf_sz]*2)
+                else:
+                    str_buf = buffer(payload, 0, len(payload)*2)
+                status_code, written_bytes = w32f.WriteFile(
+                    self.__hPipe, str_buf, stream
+                )
+                # TODO: Add it or not? :P
+                #if status_code == werr.ERROR_IO_PENDING:
+                #    event_code = w32ev.WaitForSingleObject(
+                #        stream.hEvent, event_timeout
+                #    )
+                #    self.__checkEvent(event_code, timeout)
+                #else:
+                #    status_code == 0
+                #read_bytes = w32f.GetOverlappedResult(
+                #    self.__hPipe, stream, False
+                #)
+                return status_code, written_bytes
+        else:
+            return w32f.WriteFile(
+                self.__hPipe, payload, None
+            )
+
+    def close(self):
+        if self.view == Pipe.View.SERVER:
+            w32p.DisconnectNamedPipe(self.__hPipe)
+        if self.view == Pipe.View.CLIENT:
+            self.__hPipe.Close()
+
+    @abstractmethod
+    def listen():
+        pass
+
+    @abstractmethod
+    def shutdown():
+        pass
