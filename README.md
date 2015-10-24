@@ -2,7 +2,7 @@
 **CRAPI** (spelled "crap-i" - and hoping not to be such one despite its name) or **Common Range API** is a library meant to ease the development in various areas of Linux and Windows using one common API. The library aims to be a highly stable version of common programming structures and OS native functions &amp; tools with a dedicated mindset in:
 
 +  Portability in Windows
-+  Portabiliry in both OSes (Windows & Linux alike)
++  Portability in both OSes (Windows & Linux alike)
 +  Performance
 
 We aim to cover most common scenarios beyond the basic API mechanisms (i.e. building a multithreaded pipe server, Windows services/Linux daemon etc) that will be provided to you however not every scenario will be covered. Minimally, priority will be given to the foundation mechanisms so you may be able to build whatever you want (hopefully).
@@ -48,10 +48,13 @@ A Python developer shouldn't have to figure this out especially when it's crafte
 
 Noone should have to do this. That's why we have attempted to do it FOR you WITHOUT you :P.
 
-P.S.: The above are not meant to criticize Mark Hammond's __pywin32__ excellent library. Merely, they indicate the difficulties a developer has to deal with by being forced to have to use constructs which are difficult to understand to begin with and require deep knowledge and understanding of 
+P.S.: The above are not meant to criticize Mark Hammond's __pywin32__ excellent library. Merely, they indicate the difficulties a developer has to deal with by being forced to have to use:
+
++ Non-portable code constructs due to each different OS variations.
++ Code constructs which are difficult to understand to begin with since they require deep knowledge and understanding of an OS internals and intricate implementation mechanics.
 
 # **LICENSE**
-It's MIT-based so without suggesting that this constitutes a legal advice in any way, shape or form: Do whatever the f*** you want with it! ;)
+It's based on Apache Software License 2.0 (ASF 2.0) so without suggesting that this constitutes a legal advice in any way, shape or form: Do whatever the f*** you want with it as long as you give us proper credit! :}
 
 # **DISCLAIMER**
 The project is so totally unstable and is considered experimental and pre-alpha and, as such, unstable so use at your own risk! In addition, the author makes no guarantees that the code is of top-notch quality (any Win folks here?). Patches are welcome.<br/>

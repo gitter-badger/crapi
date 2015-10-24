@@ -11,142 +11,141 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import unicode_literals
 # Python native libraries.
-# from operator import itemgetter
-from enum import Enum
+from abc import ABCMeta
+from abc import abstractmethod
+import sys
+
+import crapi.ipc.ServerPipe as ServerPipe
+from crapi.service.DaemonError import DaemonError
+from crapi.service.DaemonTimeoutError import DaemonTimeoutError
+
 # Python 3rd party libraries.
-#import win32api as w32api
-import win32pipe as w32p
-import win32file as w32f
-import win32event as w32ev
-#import win32security as w32sec
-#import win32service as w32svc
-import win32serviceutil as w32scu
-import servicemanager as scm
-import pywintypes as w32t
+if sys.platform.startswith('win'):
+    import win32event as w32ev
+    import win32serviceutil as w32scu
+    import servicemanager as scm
+    __SERVICE_KLASS__ = w32scu.ServiceFramework
+else:
+    __SERVICE_KLASS__ = object
 
 
-class Daemon(w32scu.ServiceFramework):
+class Daemon(__SERVICE_KLASS__):
 
-    """A class that enables monitoring of VMs for proper configuration."""
+    """A class that enables implementation of Windows/Linxu services."""
 
-    """
-        Discovers unused ports and IP address blocks so as to determine proper
-        configuration of VM images such as port forwarding rules (template
-        stage) and IP address of network adapters (provisioning stage).
-    """
+    __metaclass__ = ABCMeta
 
-    _svc_name_ = "osaum-vmcore"
-    _svc_display_name_ = "OS-AUtoMaton VM Core Templating Engine"
-    _svc_description_ = "Discovers inactive TCPv4 connections on this local " \
-                        "machine (ip, port) for configuration of VM images."
+    _svc_name_ = None
+    _svc_display_name_ = None
+    _svc_description_ = None
 
-    def __init__(
-            self,
-            args,
-            name='osaum-vmcore',
-            display_name='OS-AUtoMaton VM Core Templating Engine',
-            description='Discovers inactive TCPv4 connections on this local ' +
-                        'machine (ip, port) for configuration of VM images.',
-            timeout=w32ev.INFINITE,
-            event_type=w32ev.QS_ALLEVENTS
-    ):
+    def __init__(self, args, name='crapi',
+                 display_name='CRAPI: Common Range API',
+                 description='CRAPI service: Brought to you by Kounavi',
+                 timeout=0):
+
         w32scu.ServiceFramework.__init__(self, args)
-        self.timeout = timeout
-        #self.sa = w32sec.SECURITY_ATTRIBUTES()
-        #self.sa.bInheritHandle = True
-        self.hStop = w32ev.CreateEvent(None, False, False, None)
-        self.hShutdown = w32ev.CreateEvent(None, False, False, None)
-        self.server_pipe =
+
+        self.name = name
+        self._svc_name_ = self.name
+        self.display_name = display_name
+        self._svc_display_name_ = self.display_name
+        self.description = description
+        self._svc_description_ = description
+
+        if timeout == 0:
+            self.__timeout = w32ev.INFINITE
+        elif timeout > 30000 and sys.platform.startswith('win'):
+            raise DaemonTimeoutError(
+                'Windows timeout should adhere to < 30 seconds time limit!',
+                'timeout',
+                timeout
+            )
+        else:
+            self.__timeout = timeout
+
+        self.__hStop = w32ev.CreateEvent(None, False, False, None)
+        self.__hShutdown = w32ev.CreateEvent(None, False, False, None)
+        self.__svcPipe = ServerPipe.ServerPipe(name='main')
+        self.__event = w32ev.QS_ALLEVENTS
 
     def SvcDoRun(self):
-        scm.LogInfoMsg(self._svc_display_name_ + ": Starting service...")
+        scm.LogInfoMsg(self.display_name + ": Starting service...")
         self.run()
 
     def SvcStop(self):
-        scm.LogInfoMsg(
-            self._svc_display_name_ + ": Stopping service..."
-        )
+        scm.LogInfoMsg(self.display_name + ": Stopping service...")
         w32ev.SetEvent(self.hStop)
 
     def SvcShutdown(self):
-        scm.LogInfoMsg(self._svc_display_name_ + ": Shutting down service...")
+        scm.LogInfoMsg(self.display_name + ": Shutting down service...")
+        self.__svcPipe.shutdown()
         w32ev.SetEvent(self.hShutdown)
 
-    def listen():
-        pass
-
-    def close():
-        pass
-
-    #TODO: Provide as override functionality!
     def run(self):
 
-        self.hEvents = self.hStop, self.hShutdown, self.pipeStream.hEvent
-        w32p.ConnectNamedPipe(self.hPipe, self.pipeStream)
+        self.__hEvents = self.__hStop, self.__hShutdown, self.pipeStream.hEvent
+        self.__svcPipe.listen()
+
         while True:
 
             rc = w32ev.MsgWaitForMultipleObjects(
-                self.hEvents,
+                self.__hEvents,
                 False,
-                self.timeout,
-                self.event
+                self.__timeout,
+                self.__event
             )
 
             if rc == w32ev.WAIT_OBJECT_0:
                 scm.LogInfoMsg(
-                    self._svc_display_name_ + ": Received stop event..."
+                    self.display_name + ": Received stop event..."
                 )
                 break
             elif rc == w32ev.WAIT_OBJECT_0+1:
                 scm.LogInfoMsg(
-                    self._svc_display_name_ + ": Received shutdown event..."
+                    self.display_name + ": Received shutdown event..."
                 )
             elif rc == w32ev.WAIT_OBJECT_0+2:
-                scm.LogInfoMsg(self._svc_display_name_ + ": Pipe event...")
-                buf_sz = w32f.GetOverlappedResult(
-                    self.hPipe, self.pipeStream, True
-                )
-                self.msg = self.strbuf[:buf_sz]
-                statusCode, self.pipeContent = w32f.ReadFile(
-                    self.hPipe, self.pipeBuffer, self.pipeStream
-                )
-                if statusCode == 0:
-                    scm.LogInfoMsg(
-                        self._svc_display_name_
-                        + ": Pipe content: " + self.pipeContent
-                    )
-                else:
-                    scm.LogErrorMsg(
-                        self._svc_display_name_
-                        + ": Pipe Error (status code): " + statusCode
-                    )
+                scm.LogInfoMsg(self.display_name + ": Received pipe event...")
+
+                    #scm.LogInfoMsg(
+                    #    self._svc_display_name_
+                    #    + ": Pipe content: " + self.pipeContent
+                    #)
+
+                    #scm.LogErrorMsg(
+                    #    self._svc_display_name_
+                    #    + ": Pipe Error (status code): " + statusCode
+                    #)
+
             elif rc == w32ev.WAIT_OBJECT_0+len(self.hEvents):
-                scm.LogInfoMsg(self._svc_display_name_ + ": All events...")
+                scm.LogInfoMsg(self.display_name + ": All events...")
             elif rc == w32ev.WAIT_TIMEOUT:
                 scm.LogInfoMsg(
-                    self._svc_display_name_ + ": Event timeout expired..."
+                    self.display_name + ": Event timeout expired..."
                 )
             else:
                 raise RuntimeError("What is this? Quack quack!")
 
-        w32p.DisconnectNamedPipe(self.hPipe)
-        scm.LogInfoMsg(self._svc_display_name_ + ": Exiting...")
+        self.__svcPipe.close()
+        scm.LogInfoMsg(self.display_name + ": Exiting service...")
 
-    def start(self):
-        raise NotImplementedError(
-            "Unimplemented client function! Please override it!"
-        )
+    #@abstractmethod
+    #def start(self):
+    #    raise NotImplementedError(
+    #        "Unimplemented client function! Please override it!"
+    #    )
 
-    def stop(self):
-        raise NotImplementedError(
-            "Unimplemented client function! Please override it!"
-        )
+    #@abstractmethod
+    #def stop(self):
+    #    raise NotImplementedError(
+    #        "Unimplemented client function! Please override it!"
+    #    )
 
+    @abstractmethod
+    def setup(self):
+        pass
 
-#def hRebootFunc(svc_name, *args):
-#    scm.LogInfoMsg(svc_name + ": System reboot detected!")
-#    return True
-
-if __name__ == "__main__":
-    #w32api.SetConsoleCtrlHandler(hRebootFunc, True)
-    w32scu.HandleCommandLine(Daemon)
+    @abstractmethod
+    def advance(self):
+        pass

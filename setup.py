@@ -29,14 +29,14 @@ setup(
     long_description=long_description,
 
     # The project's main homepage.
-    url='https://github.com/pypa/sampleproject',
+    url='https://github.com/kounavi/crapi',
 
     # Author details
     author='Iraklis D.',
     author_email='hdiakos@outlook.com',
 
     # Choose your license
-    license='MIT',
+    license='ASF 2.0',
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
     classifiers=[

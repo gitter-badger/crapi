@@ -2,7 +2,7 @@
 # Pilavidis Kriton (kriton_pilavidis@outlook.com)
 # All Rights Reserved.
 # You may use, distribute and modify this code under the
-# terms of the MIT license.
+# terms of the ASF 2.0 license.
 #
 
 """Part of the messaging module."""

@@ -2,7 +2,7 @@
 # Pilavidis Kriton (kriton_pilavidis@outlook.com)
 # All Rights Reserved.
 # You may use, distribute and modify this code under the
-# terms of the MIT license.
+# terms of the ASF 2.0 license.
 #
 
 """Part of the ipc module."""
@@ -10,6 +10,8 @@
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import unicode_literals
+# Python native libraries.
+from enum import Enum
 
 import crapi.ipc.Pipe as Pipe
 from crapi.ipc.PipeError import PipeError
@@ -17,7 +19,13 @@ from crapi.ipc.PipeError import PipeError
 
 class ServerPipe(Pipe.Pipe):
 
-    def _listen(self):
+    class POLICY(Enum):
+        RW = 'rw'
+        WR = 'wr'
+        RO = 'ro'
+        WO = 'wo'
+
+    def _listen(self, policy=POLICY.RW, repeat=True):
         status_code = self.connect()
         if status_code == 0:
             pipe_status, pipe_bytes, pipe_content = self.read()

@@ -10,18 +10,22 @@
 from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import unicode_literals
+# Python native libraries.
+import win32serviceutil as w32scu
 
-import crapi.ipc.Pipe as Pipe
+import crapi.service.Daemon as Daemon
 
 
-class ClientPipe(Pipe.Pipe):
+class WindowsDaemon(Daemon.Daemon):
 
-    def listen(self):
-        raise NotImplementedError(
-            'This should only be done from a ServerPipe!'
-        )
+    def _setup(self):
+        w32scu.HandleCommandLine(WindowsDaemon)
 
-    def shutdown(self):
-        raise NotImplementedError(
-            'This should only be done from a ServerPipe!'
-        )
+    def _advance(self):
+        return self.srvPipe.read()
+
+    def setup(self):
+        self._setup()
+
+    def advance(self):
+        return self._advance()
