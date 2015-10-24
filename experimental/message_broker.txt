@@ -1,5 +1,0 @@
-    
-    mb = MessageBroker.MessageBroker('OS-AUtoMaton-Queue')
-    mb.dispatch()
-    msg = mb.fetch()
-    print(msg)

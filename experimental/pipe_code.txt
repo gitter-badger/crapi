@@ -1,8 +1,0 @@
-#import win32pipe as w32p
-#import win32file as w32f
-#import pywintypes as w32t
-#import winerror as werr
-
-# Overlapping I/O
-while self.stream.Internal == werr.ERROR_NO_MORE_ITEMS:
-    time.sleep(1)

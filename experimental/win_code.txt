@@ -1,5 +1,0 @@
-from operator import itemgetter
-
-    sa = win32security.SECURITY_ATTRIBUTES()
-    print(sa.GetSecurityDescriptorDacl())
-    print(win32api.GetUserName())
