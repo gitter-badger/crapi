@@ -1,4 +1,6 @@
 # **Welcome to CRAPI!**
+
+[![Join the chat at https://gitter.im/Kounavi/crapi](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/Kounavi/crapi?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 **CRAPI** (spelled "crap-i" - and hoping not to be such one despite its name) or **Common Range API** is a library meant to ease the development in various areas of Linux and Windows using one common API. The library aims to be a highly stable version of common programming structures and OS native functions &amp; tools with a dedicated mindset in:
 
 +  Portability in Windows
